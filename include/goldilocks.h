@@ -14,7 +14,7 @@
 
 #ifndef GOLDI_IMPLEMENT_PRECOMPUTED_KEYS
 /** If nonzero, implement precomputation for verify and ECDH. */
-#define GOLDI_IMPLEMENT_PRECOMPUTED_KEYS 1
+//#define GOLDI_IMPLEMENT_PRECOMPUTED_KEYS 1
 #endif
 
 /** The size of the Goldilocks field, in bits. */
@@ -36,7 +36,7 @@
 #define GOLDI_SHARED_SECRET_BYTES 64
 
 /** The size of a Goldilocks private key, in bytes. */
-#define GOLDI_PRIVATE_KEY_BYTES   (2*GOLDI_FIELD_BYTES + GOLDI_SYMKEY_BYTES)
+#define GOLDI_PRIVATE_KEY_BYTES   (2*GOLDI_FIELD_BYTES)
 
 /** The size of a Goldilocks signature, in bytes. */
 #define GOLDI_SIGNATURE_BYTES     (2*GOLDI_FIELD_BYTES)
@@ -53,8 +53,8 @@ struct goldilocks_public_key_t {
 /**
  * @brief Serialized form of a Goldilocks private key.
  *
- * Contains 56 bytes of actual private key, 56 bytes of
- * public key, and 32 bytes of symmetric key for randomization.
+ * Contains 56 bytes of actual private key, and 56 bytes of
+ * public key.
  *
  * @warning This isn't even my final form!
  */
@@ -74,9 +74,6 @@ static const int GOLDI_ECORRUPT = 44801;
 
 /** @brief Error: other party's key is corrupt. */
 static const int GOLDI_EINVAL   = 44802;
-
-/** @brief Error: not enough entropy. */
-static const int GOLDI_ENODICE  = 44804;
 
 /** @brief Error: you need to initialize the library first. */
 static const int GOLDI_EUNINIT  = 44805;
@@ -118,13 +115,14 @@ __attribute__((warn_unused_result,visibility ("default")));
 int
 goldilocks_keygen (
     struct goldilocks_private_key_t *privkey,
-    struct goldilocks_public_key_t *pubkey
+    struct goldilocks_public_key_t *pubkey,
+    const unsigned char proto[GOLDI_FIELD_BYTES]
 ) __attribute__((warn_unused_result,nonnull(1,2),visibility ("default")));
 
 /**
  * @brief Derive a key from its compressed form.
  * @param [out] privkey The derived private key.
- * @param [in] proto The compressed or proto-key, which must be 32 random bytes.
+ * @param [in] proto The proto-key, which must be 56 random bytes.
  *
  * @warning This isn't even my final form!
  *
@@ -134,24 +132,7 @@ goldilocks_keygen (
 int
 goldilocks_derive_private_key (
     struct goldilocks_private_key_t *privkey,
-    const unsigned char proto[GOLDI_SYMKEY_BYTES]
-) __attribute__((nonnull(1,2),visibility ("default")));
-
-/**
- * @brief Compress a private key (by copying out the proto-key)
- * @param [out] proto The proto-key.
- * @param [in] privkey The private key.
- *
- * @warning This isn't even my final form!
- * @todo test.
- *
- * @retval GOLDI_EOK Success.
- * @retval GOLDI_EUNINIT You must call goldilocks_init() first.
- */
-void
-goldilocks_underive_private_key (
-    unsigned char proto[GOLDI_SYMKEY_BYTES],
-    const struct goldilocks_private_key_t *privkey
+    const unsigned char proto[GOLDI_FIELD_BYTES]
 ) __attribute__((nonnull(1,2),visibility ("default")));
 
 /**

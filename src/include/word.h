@@ -7,6 +7,7 @@
 
 /* for posix_memalign */
 #define _XOPEN_SOURCE 600
+#define GOLDI_FORCE_32_BIT 1
 
 #ifndef __APPLE__
 #define _BSD_SOURCE
@@ -22,6 +23,13 @@
 #include <arm_neon.h>
 #elif __SSE2__
 #include <immintrin.h>
+#endif
+
+#ifndef likely
+#  define likely(x)       __builtin_expect((x),1) \
+    /**< @brief Tell the compiler that a branch is likely, for optimization. */
+#  define unlikely(x)     __builtin_expect((x),0) \
+    /**< @brief Tell the compiler that a branch is unlikely, for optimization. */
 #endif
 
 #if (__SIZEOF_INT128__ == 16 && __SIZEOF_SIZE_T__ == 8 && (__SIZEOF_LONG__==8 || __POINTER_WIDTH__==64) && !GOLDI_FORCE_32_BIT)

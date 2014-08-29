@@ -9,28 +9,31 @@
 
 #if GOLDILOCKS_USE_PTHREAD
 #include <pthread.h>
+#else
+static const char *
+compare_and_swap (
+    const char *volatile* target,
+    const char *old,
+    const char *new
+) {
+    const char* ret = *target; if (*target == old) *target = new; return ret;
+}
+static int
+bool_compare_and_swap (
+    const char *volatile* target,
+    const char *old,
+    const char *new
+) {
+    if (*target != old) return 0;
+    *target = new;
+    return 1;
+}
 #endif
 
 #include "goldilocks.h"
 #include "ec_point.h"
 #include "scalarmul.h"
 #include "barrett_field.h"
-#include "crandom.h"
-#include "sha512.h"
-#include "intrinsics.h"
-
-#ifndef GOLDILOCKS_RANDOM_INIT_FILE
-#define GOLDILOCKS_RANDOM_INIT_FILE "/dev/urandom"
-#endif
-
-#ifndef GOLDILOCKS_RANDOM_RESEED_INTERVAL
-#define GOLDILOCKS_RANDOM_RESEED_INTERVAL 10000
-#endif
-
-/* We'll check it ourselves */
-#ifndef GOLDILOCKS_RANDOM_RESEEDS_MANDATORY
-#define GOLDILOCKS_RANDOM_RESEEDS_MANDATORY 0
-#endif
 
 #define GOLDI_DIVERSIFY_BYTES 8
 
@@ -53,7 +56,6 @@ static struct {
     struct tw_niels_t combs[COMB_N << (COMB_T-1)];
     struct fixed_base_table_t fixed_base;
     struct tw_niels_t wnafs[1<<WNAF_PRECMP_BITS];
-    struct crandom_state_t rand;
 } goldilocks_global;
 
 static inline mask_t
@@ -94,20 +96,8 @@ goldilocks_init () {
     succ =  precompute_fixed_base(&goldilocks_global.fixed_base, &text,
         COMB_N, COMB_T, COMB_S, goldilocks_global.combs);
     succ &= precompute_fixed_base_wnaf(goldilocks_global.wnafs, &text, WNAF_PRECMP_BITS);
-    
-    int criff_res = crandom_init_from_file(&goldilocks_global.rand,
-        GOLDILOCKS_RANDOM_INIT_FILE,
-        GOLDILOCKS_RANDOM_RESEED_INTERVAL,
-        GOLDILOCKS_RANDOM_RESEEDS_MANDATORY);
-        
-#ifdef SUPERCOP_WONT_LET_ME_OPEN_FILES
-    if (criff_res == EMFILE) {
-        crandom_init_from_buffer(&goldilocks_global.rand, "SUPERCOP won't let me open files");
-        criff_res = 0;
-    }
-#endif
-        
-    if (succ & !criff_res) {
+
+    if (succ) {
         if (!bool_compare_and_swap(&goldilocks_global.state, G_INITING, G_INITED)) {
             abort();
         }
@@ -115,8 +105,9 @@ goldilocks_init () {
     }
     
     /* it failed! fall though... */
-
+#if GOLDILOCKS_USE_PTHREAD
 fail:
+#endif
     if (!bool_compare_and_swap(&goldilocks_global.state, G_INITING, G_FAILED)) {
         /* ok something is seriously wrong */
         abort();
@@ -127,28 +118,17 @@ fail:
 int
 goldilocks_derive_private_key (
     struct goldilocks_private_key_t *privkey,
-    const unsigned char proto[GOLDI_SYMKEY_BYTES]
+    const unsigned char proto[GOLDI_FIELD_BYTES]
 ) {
     if (!goldilocks_check_init()) {
         return GOLDI_EUNINIT;
     }
     
-    memcpy(&privkey->opaque[2*GOLDI_FIELD_BYTES], proto, GOLDI_SYMKEY_BYTES);
-    
-    unsigned char skb[SHA512_OUTPUT_BYTES];
-    word_t sk[GOLDI_FIELD_WORDS];
-    assert(sizeof(skb) >= sizeof(sk));
-    
-    struct sha512_ctx_t ctx;
     struct tw_extensible_t exta;
     struct field_t pk;
-    
-    sha512_init(&ctx);
-    sha512_update(&ctx, (const unsigned char *)"derivepk", GOLDI_DIVERSIFY_BYTES);
-    sha512_update(&ctx, proto, GOLDI_SYMKEY_BYTES);
-    sha512_final(&ctx, (unsigned char *)skb);
 
-    barrett_deserialize_and_reduce(sk, skb, SHA512_OUTPUT_BYTES, &curve_prime_order);
+    word_t sk[GOLDI_FIELD_WORDS];
+    barrett_deserialize_and_reduce(sk, proto, GOLDI_FIELD_BYTES, &curve_prime_order);
     barrett_serialize(privkey->opaque, sk, GOLDI_FIELD_BYTES);
 
     scalarmul_fixed_base(&exta, sk, GOLDI_SCALAR_BITS, &goldilocks_global.fixed_base);
@@ -159,44 +139,21 @@ goldilocks_derive_private_key (
     return GOLDI_EOK;
 }
 
-void
-goldilocks_underive_private_key (
-    unsigned char proto[GOLDI_SYMKEY_BYTES],
-    const struct goldilocks_private_key_t *privkey
-) {
-    memcpy(proto, &privkey->opaque[2*GOLDI_FIELD_BYTES], GOLDI_SYMKEY_BYTES);
-}
-
 int
 goldilocks_keygen (
     struct goldilocks_private_key_t *privkey,
-    struct goldilocks_public_key_t *pubkey
+    struct goldilocks_public_key_t *pubkey,
+    const unsigned char proto[GOLDI_FIELD_BYTES]
 ) {
     if (!goldilocks_check_init()) {
         return GOLDI_EUNINIT;
     }
-    
-    unsigned char proto[GOLDI_SYMKEY_BYTES];
 
-#if GOLDILOCKS_USE_PTHREAD
-    int ml_ret = pthread_mutex_lock(&goldilocks_global.mutex);
-    if (ml_ret) return ml_ret;
-#endif
+    int ret = goldilocks_derive_private_key(privkey, proto);
 
-    int ret = crandom_generate(&goldilocks_global.rand, proto, sizeof(proto));
+    if (!ret) ret = goldilocks_private_to_public(pubkey, privkey);
 
-#if GOLDILOCKS_USE_PTHREAD
-    ml_ret = pthread_mutex_unlock(&goldilocks_global.mutex);
-    if (ml_ret) abort();
-#endif
-    
-    int ret2 = goldilocks_derive_private_key(privkey, proto);
-    if (!ret) ret = ret2;
-    
-    ret2 = goldilocks_private_to_public(pubkey, privkey);
-    if (!ret) ret = ret2;
-    
-    return ret ? GOLDI_ENODICE : GOLDI_EOK;
+    return ret;
 }
 
 int
@@ -217,7 +174,7 @@ goldilocks_private_to_public (
 
 static int
 goldilocks_shared_secret_core (
-    uint8_t shared[GOLDI_SHARED_SECRET_BYTES],
+    uint8_t shared[GOLDI_FIELD_BYTES],
     const struct goldilocks_private_key_t *my_privkey,
     const struct goldilocks_public_key_t *your_pubkey,
     const struct goldilocks_precomputed_public_key_t *pre
@@ -226,19 +183,10 @@ goldilocks_shared_secret_core (
      * so it doesn't check init.
      */
     
-    assert(GOLDI_SHARED_SECRET_BYTES == SHA512_OUTPUT_BYTES);
-    
     word_t sk[GOLDI_FIELD_WORDS];
     struct field_t pk;
     
     mask_t succ = field_deserialize(&pk,your_pubkey->opaque), msucc = -1;
-    
-#ifdef EXPERIMENT_ECDH_STIR_IN_PUBKEYS
-    struct field_t sum, prod;
-    msucc &= field_deserialize(&sum,&my_privkey->opaque[GOLDI_FIELD_BYTES]);
-    field_mul(&prod,&pk,&sum);
-    field_add(&sum,&pk,&sum);
-#endif
     
     msucc &= barrett_deserialize(sk,my_privkey->opaque,&curve_prime_order);
     
@@ -257,35 +205,6 @@ goldilocks_shared_secret_core (
     
     
     field_serialize(shared,&pk);
-    
-    /* obliterate records of our failure by adjusting with obliteration key */
-    struct sha512_ctx_t ctx;
-    sha512_init(&ctx);
-
-#ifdef EXPERIMENT_ECDH_OBLITERATE_CT
-    uint8_t oblit[GOLDI_DIVERSIFY_BYTES + GOLDI_SYMKEY_BYTES];
-    unsigned i;
-    for (i=0; i<GOLDI_DIVERSIFY_BYTES; i++) {
-        oblit[i] = "noshared"[i] & ~(succ&msucc);
-    }
-    for (i=0; i<GOLDI_SYMKEY_BYTES; i++) {
-        oblit[GOLDI_DIVERSIFY_BYTES+i] = my_privkey->opaque[2*GOLDI_FIELD_BYTES+i] & ~(succ&msucc);
-    }
-    sha512_update(&ctx, oblit, sizeof(oblit));
-#endif
-    
-#ifdef EXPERIMENT_ECDH_STIR_IN_PUBKEYS
-    /* stir in the sum and product of the pubkeys. */
-    uint8_t a_pk[GOLDI_FIELD_BYTES];
-    field_serialize(a_pk, &sum);
-    sha512_update(&ctx, a_pk, GOLDI_FIELD_BYTES);
-    field_serialize(a_pk, &prod);
-    sha512_update(&ctx, a_pk, GOLDI_FIELD_BYTES);
-#endif
-       
-    /* stir in the shared key and finish */
-    sha512_update(&ctx, shared, GOLDI_FIELD_BYTES);
-    sha512_final(&ctx, shared);
     
     return (GOLDI_ECORRUPT & ~msucc)
         | (GOLDI_EINVAL & msucc &~ succ)

@@ -8,7 +8,6 @@
 #include <limits.h>
 #include <string.h>
 
-#include "intrinsics.h"
 #include "scalarmul.h"
 #include "barrett_field.h"
 

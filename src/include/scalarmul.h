@@ -11,7 +11,6 @@
 
 #include "ec_point.h"
 #include "field.h"
-#include "intrinsics.h"
 #include "magic.h"
 
 #ifdef __cplusplus

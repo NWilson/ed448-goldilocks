@@ -13,12 +13,13 @@ endif
 LD = $(CC)
 ASM ?= $(CC)
 
-ifneq (,$(findstring x86_64,$(MACHINE)))
-ARCH ?= arch_x86_64
-else
-# no i386 port yet
-ARCH ?= arch_arm_32
-endif
+#ifneq (,$(findstring x86_64,$(MACHINE)))
+#ARCH ?= arch_x86_64
+#else
+## no i386 port yet
+#ARCH ?= arch_arm_32
+#endif
+ARCH = arch_32
 
 
 WARNFLAGS = -pedantic -Wall -Wextra -Werror -Wunreachable-code \
@@ -39,7 +40,7 @@ endif
 ARCHFLAGS += -mcpu=cortex-a8 # FIXME
 GENFLAGS += -DN_TESTS_BASE=1000 # sooooo sloooooow
 else
-ARCHFLAGS += -maes -mavx2 -mbmi2 #TODO
+ARCHFLAGS += #-maes -mavx2 -mbmi2 #TODO
 endif
 
 ifeq ($(CC),clang)
@@ -60,8 +61,8 @@ ASFLAGS = $(ARCHFLAGS)
 
 HEADERS= Makefile $(shell find . -name "*.h") build/timestamp
 
-LIBCOMPONENTS= build/goldilocks.o build/barrett_field.o build/crandom.o \
-  build/p448.o build/ec_point.o build/scalarmul.o build/sha512.o build/magic.o
+LIBCOMPONENTS= build/goldilocks.o build/barrett_field.o \
+  build/p448.o build/ec_point.o build/scalarmul.o build/magic.o
 
 TESTCOMPONENTS=build/test.o build/test_scalarmul.o build/test_sha512.o \
 	build/test_pointops.o build/test_arithmetic.o build/test_goldilocks.o build/magic.o
